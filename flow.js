@@ -8,10 +8,18 @@ const { google } = require('googleapis');
 const server = http.createServer((req, res) => {
   if (req.url === '/healthz') {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('OK');
+    if (req.method === 'HEAD') {
+      res.end(); // Không gửi body cho HEAD
+    } else {
+      res.end('OK'); // Gửi body cho các phương thức khác (như GET)
+    }
   } else {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('Flow Automation is running');
+    if (req.method === 'HEAD') {
+      res.end(); // Không gửi body cho HEAD
+    } else {
+      res.end('Flow Automation is running'); // Gửi body cho các phương thức khác
+    }
   }
 });
 server.listen(process.env.PORT || 8080, () => {
