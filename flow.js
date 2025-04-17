@@ -2,7 +2,6 @@ const axios = require('axios');
 const fs = require('fs').promises;
 const chalk = require('chalk'); // Sử dụng chalk@4.1.2
 const jwt = require('jsonwebtoken'); // Thêm thư viện jsonwebtoken để giải mã JWT
-const { HttpsProxyAgent } = require('https-proxy-agent'); // Thêm thư viện để xử lý proxy
 const readline = require('readline'); // Thêm thư viện để đọc input từ người dùng
 
 // Tạo giao diện để đọc input từ người dùng
@@ -18,15 +17,6 @@ let pauseUntil = 0;
 // Hàm delay (để chờ trước khi retry hoặc giữa các yêu cầu)
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// Hàm hỏi người dùng về việc sử dụng proxy
-function askUseProxy() {
-  return new Promise((resolve) => {
-    rl.question('Bạn có muốn sử dụng proxy không? (Y/N): ', (answer) => {
-      resolve(answer.trim().toUpperCase() === 'Y');
-    });
-  });
-}
-
 // Hàm giải mã accessToken để lấy email
 function decodeAccessToken(accessToken) {
   try {
@@ -36,48 +26,6 @@ function decodeAccessToken(accessToken) {
     console.error(chalk.red('❌ Lỗi khi giải mã accessToken:'), error.message);
     return 'Không xác định';
   }
-}
-
-// Hàm đọc proxy từ file proxy.txt
-async function readProxies() {
-  try {
-    const data = await fs.readFile('proxy.txt', 'utf8');
-    return data
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line);
-  } catch (error) {
-    console.error(chalk.red('❌ Lỗi khi đọc file proxy.txt:'), error.message);
-    return [];
-  }
-}
-
-// Hàm đọc trạng thái proxy từ file proxyStatus.txt
-async function readProxyStatus() {
-  try {
-    const data = await fs.readFile('proxyStatus.txt', 'utf8');
-    const proxyStatusMap = {};
-    data
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line)
-      .forEach((line) => {
-        const [email, useProxy] = line.split('|');
-        proxyStatusMap[email] = useProxy === 'true';
-      });
-    return proxyStatusMap;
-  } catch (error) {
-    // Nếu file không tồn tại hoặc lỗi, trả về object rỗng
-    return {};
-  }
-}
-
-// Hàm lưu trạng thái proxy vào file proxyStatus.txt
-async function saveProxyStatus(proxyStatusMap) {
-  const data = Object.entries(proxyStatusMap)
-    .map(([email, useProxy]) => `${email}|${useProxy}`)
-    .join('\n');
-  await fs.writeFile('proxyStatus.txt', data);
 }
 
 // Hàm đọc accessToken từ file data.txt
@@ -264,12 +212,11 @@ async function makeRequestWithRetry(config, retries = 5, delayMs = 5000) {
 }
 
 // Hàm kiểm tra AccessToken có hợp lệ không bằng cách gọi API get-earn-stats
-async function checkAccessTokenValidity(accessToken, proxyAgent) {
+async function checkAccessTokenValidity(accessToken) {
   try {
     await makeRequestWithRetry({
       method: 'get',
       url: 'https://api2.flow3.tech/api/user/get-earn-stats',
-      httpsAgent: proxyAgent,
       headers: {
         Authorization: `Bearer ${accessToken}`,
         accept: 'application/json, text/plain, */*',
@@ -295,7 +242,7 @@ async function checkAccessTokenValidity(accessToken, proxyAgent) {
 }
 
 // Hàm làm mới accessToken bằng refreshToken và accessToken cũ
-async function refreshAccessToken(oldAccessToken, refreshToken, proxyAgent, retryCount = 3) {
+async function refreshAccessToken(oldAccessToken, refreshToken) {
   if (!oldAccessToken || oldAccessToken === 'undefined' || !refreshToken || refreshToken === 'undefined') {
     throw new Error('AccessToken hoặc refreshToken không hợp lệ');
   }
@@ -305,7 +252,6 @@ async function refreshAccessToken(oldAccessToken, refreshToken, proxyAgent, retr
       method: 'post',
       url: 'https://api2.flow3.tech/api/user/refresh',
       data: { refreshToken },
-      httpsAgent: proxyAgent,
       headers: {
         Authorization: `Bearer ${oldAccessToken}`,
         accept: 'application/json, text/plain, */*',
@@ -331,12 +277,11 @@ async function refreshAccessToken(oldAccessToken, refreshToken, proxyAgent, retr
 }
 
 // Hàm gọi API lấy danh sách task điểm danh hằng ngày
-async function getDailyCheckInTasks(accessToken, proxyAgent) {
+async function getDailyCheckInTasks(accessToken) {
   try {
     const response = await makeRequestWithRetry({
       method: 'get',
       url: 'https://api2.flow3.tech/api/task/get-user-task-daily',
-      httpsAgent: proxyAgent,
       headers: {
         Authorization: `Bearer ${accessToken}`,
         accept: 'application/json, text/plain, */*',
@@ -359,13 +304,12 @@ async function getDailyCheckInTasks(accessToken, proxyAgent) {
 }
 
 // Hàm gọi API thực hiện điểm danh hằng ngày
-async function performDailyCheckIn(accessToken, taskId, proxyAgent) {
+async function performDailyCheckIn(accessToken, taskId) {
   try {
     const response = await makeRequestWithRetry({
       method: 'post',
       url: 'https://api2.flow3.tech/api/task/daily-check-in',
       data: { taskId },
-      httpsAgent: proxyAgent,
       headers: {
         Authorization: `Bearer ${accessToken}`,
         accept: 'application/json, text/plain, */*',
@@ -389,7 +333,7 @@ async function performDailyCheckIn(accessToken, taskId, proxyAgent) {
 }
 
 // Hàm xử lý điểm danh hằng ngày
-async function checkInDaily(accessToken, proxyAgent, email, checkInMap) {
+async function checkInDaily(accessToken, email, checkInMap) {
   try {
     const lastCheckInTimestamp = checkInMap[email] || 0;
 
@@ -399,7 +343,7 @@ async function checkInDaily(accessToken, proxyAgent, email, checkInMap) {
     }
 
     // Lấy danh sách task điểm danh
-    const dailyTasks = await getDailyCheckInTasks(accessToken, proxyAgent);
+    const dailyTasks = await getDailyCheckInTasks(accessToken);
 
     // Kiểm tra xem tất cả các task đã claimed chưa
     const allClaimed = dailyTasks.every((task) => task.status === 'claimed');
@@ -452,10 +396,10 @@ async function checkInDaily(accessToken, proxyAgent, email, checkInMap) {
 
     try {
       // Gọi API điểm danh
-      await performDailyCheckIn(accessToken, taskId, proxyAgent);
+      await performDailyCheckIn(accessToken, taskId);
 
       // Gọi lại API để kiểm tra trạng thái task sau khi điểm danh
-      const updatedTasks = await getDailyCheckInTasks(accessToken, proxyAgent);
+      const updatedTasks = await getDailyCheckInTasks(accessToken);
       const updatedTask = updatedTasks[claimedCount]; // Task tại vị trí vừa điểm danh
 
       if (!updatedTask || updatedTask.status === 'locked') {
@@ -492,12 +436,11 @@ async function checkInDaily(accessToken, proxyAgent, email, checkInMap) {
 }
 
 // Hàm gọi API lấy danh sách nhiệm vụ
-async function getUserTasks(accessToken, proxyAgent) {
+async function getUserTasks(accessToken) {
   try {
     const response = await makeRequestWithRetry({
       method: 'get',
       url: 'https://api2.flow3.tech/api/task/get-user-task',
-      httpsAgent: proxyAgent,
       headers: {
         Authorization: `Bearer ${accessToken}`,
         accept: 'application/json, text/plain, */*',
@@ -520,13 +463,12 @@ async function getUserTasks(accessToken, proxyAgent) {
 }
 
 // Hàm gọi API thực hiện nhiệm vụ (do-task)
-async function doTask(accessToken, taskId, proxyAgent) {
+async function doTask(accessToken, taskId) {
   try {
     const response = await makeRequestWithRetry({
       method: 'post',
       url: 'https://api2.flow3.tech/api/task/do-task',
       data: { taskId },
-      httpsAgent: proxyAgent,
       headers: {
         Authorization: `Bearer ${accessToken}`,
         accept: 'application/json, text/plain, */*',
@@ -550,17 +492,16 @@ async function doTask(accessToken, taskId, proxyAgent) {
 }
 
 // Hàm gọi API claim phần thưởng nhiệm vụ
-async function claimTask(accessToken, taskId, proxyAgent) {
+async function claimTask(accessToken, taskId) {
   try {
     const response = await makeRequestWithRetry({
       method: 'post',
       url: 'https://api2.flow3.tech/api/task/claim-task',
       data: { taskId },
-      httpsAgent: proxyAgent,
       headers: {
         Authorization: `Bearer ${accessToken}`,
         accept: 'application/json, text/plain, */*',
-        'accept-language': 'vi,fr-FR;q=0.9,fr;q=0.8,en-US;q=0.7,en;q=0.6',
+        'accept-language': 'vi,fr-FR;q=0.9,fr;q=0.8,en Madonna:q=0.7,en:q=0.6',
         'content-type': 'application/json',
         'sec-ch-ua': '"Chromium";v="134", "Not:A-Brand";v="24", "Google Chrome";v="134"',
         'sec-ch-ua-mobile': '?0',
@@ -580,11 +521,11 @@ async function claimTask(accessToken, taskId, proxyAgent) {
 }
 
 // Hàm thực hiện tất cả các nhiệm vụ cho một tài khoản và trả về trạng thái có task hay không
-async function performTasks(accessToken, proxyAgent, email, completedTasks) {
+async function performTasks(accessToken, email, completedTasks) {
   let hasTasks = false;
 
   try {
-    let tasks = await getUserTasks(accessToken, proxyAgent);
+    let tasks = await getUserTasks(accessToken);
 
     for (const task of tasks) {
       const taskId = task._id;
@@ -599,17 +540,17 @@ async function performTasks(accessToken, proxyAgent, email, completedTasks) {
       console.log(chalk.cyan(`🔄 Đang thực hiện nhiệm vụ "${taskName}"...`));
 
       try {
-        await doTask(accessToken, taskId, proxyAgent);
+        await doTask(accessToken, taskId);
 
-        tasks = await getUserTasks(accessToken, proxyAgent);
+        tasks = await getUserTasks(accessToken);
         const updatedTask = tasks.find((t) => t._id === taskId);
         if (!updatedTask || updatedTask.status !== 'pending') {
           throw new Error(`Nhiệm vụ không chuyển sang trạng thái "pending".`);
         }
 
-        await claimTask(accessToken, taskId, proxyAgent);
+        await claimTask(accessToken, taskId);
 
-        tasks = await getUserTasks(accessToken, proxyAgent);
+        tasks = await getUserTasks(accessToken);
         const claimedTask = tasks.find((t) => t._id === taskId);
         if (!claimedTask || claimedTask.status !== 'claimed') {
           throw new Error(`Nhiệm vụ không chuyển sang trạng thái "claimed".`);
@@ -633,12 +574,11 @@ async function performTasks(accessToken, proxyAgent, email, completedTasks) {
 }
 
 // Hàm gọi API get-earn-stats để lấy thông tin điểm số
-async function getEarnStats(accessToken, proxyAgent) {
+async function getEarnStats(accessToken) {
   try {
     const response = await makeRequestWithRetry({
       method: 'get',
       url: 'https://api2.flow3.tech/api/user/get-earn-stats',
-      httpsAgent: proxyAgent,
       headers: {
         Authorization: `Bearer ${accessToken}`,
         accept: 'application/json, text/plain, */*',
@@ -665,11 +605,8 @@ async function checkConnectionQuality(
   index,
   accessTokens,
   refreshTokens,
-  proxyAgent,
-  proxyAddress,
   checkInMap,
-  completedTasks,
-  proxyStatusMap
+  completedTasks
 ) {
   let accessToken = accessTokens[index];
   let refreshToken = refreshTokens[index];
@@ -680,48 +617,22 @@ async function checkConnectionQuality(
     return { success: false, email };
   }
 
-  let currentAgent = proxyAgent;
-  let currentProxyAddress = proxyAddress;
-
   // Kiểm tra AccessToken có hợp lệ không trước khi thực hiện bất kỳ thao tác nào
   let isTokenValid = false;
   try {
-    isTokenValid = await checkAccessTokenValidity(accessToken, currentAgent);
+    isTokenValid = await checkAccessTokenValidity(accessToken);
   } catch (error) {
-    // Xử lý lỗi 502 Bad Gateway
     if (error.message.includes('Lỗi 502 Bad Gateway')) {
       console.log(chalk.red(`❌ Tài khoản ${email}: Lỗi 502 Bad Gateway sau nhiều lần thử. Bỏ qua...`));
       return { success: false, email };
     }
-    // Xử lý các lỗi liên quan đến proxy (ENETUNREACH, ECONNREFUSED, ETIMEDOUT)
-    if (error.code === 'ENETUNREACH' || error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT') {
-      console.log(
-        chalk.yellow(
-          `⚠️ Proxy ${currentProxyAddress} không khả dụng cho tài khoản ${email}, chuyển sang chế độ không proxy...`
-        )
-      );
-      proxyStatusMap[email] = false; // Chuyển sang không proxy
-      await saveProxyStatus(proxyStatusMap);
-      currentAgent = null; // Bỏ proxy
-      currentProxyAddress = null;
-      try {
-        isTokenValid = await checkAccessTokenValidity(accessToken, currentAgent);
-      } catch (innerError) {
-        if (innerError.message.includes('Lỗi 502 Bad Gateway')) {
-          console.log(chalk.red(`❌ Tài khoản ${email}: Lỗi 502 Bad Gateway sau nhiều lần thử (không proxy). Bỏ qua...`));
-          return { success: false, email };
-        }
-        throw innerError;
-      }
-    } else {
-      throw error;
-    }
+    throw error;
   }
 
   if (!isTokenValid) {
     console.log(chalk.yellow(`⚠️ Tài khoản ${email}: AccessToken hết hạn, đang làm mới...`));
     try {
-      const newTokens = await refreshAccessToken(accessToken, refreshToken, currentAgent);
+      const newTokens = await refreshAccessToken(accessToken, refreshToken);
       accessTokens[index] = newTokens.accessToken;
       refreshTokens[index] = newTokens.refreshToken;
       await saveAccessTokens(accessTokens);
@@ -737,7 +648,7 @@ async function checkConnectionQuality(
   // Sau khi đảm bảo token hợp lệ, tiếp tục xử lý các bước khác
   try {
     // Xử lý điểm danh hằng ngày
-    const checkInResult = await checkInDaily(accessToken, currentAgent, email, checkInMap);
+    const checkInResult = await checkInDaily(accessToken, email, checkInMap);
 
     // Nếu trạng thái là error, bỏ qua tài khoản
     if (checkInResult.status === 'error') {
@@ -745,12 +656,11 @@ async function checkConnectionQuality(
     }
 
     // Tiếp tục thực hiện các bước khác ngay cả khi điểm danh chưa thành công
-    const hasTasks = await performTasks(accessToken, currentAgent, email, completedTasks);
+    const hasTasks = await performTasks(accessToken, email, completedTasks);
 
     const connectionResponse = await makeRequestWithRetry({
       method: 'get',
       url: 'https://api2.flow3.tech/api/user/get-connection-quality',
-      httpsAgent: currentAgent,
       headers: {
         Authorization: `Bearer ${accessToken}`,
         accept: 'application/json, text/plain, */*',
@@ -767,46 +677,21 @@ async function checkConnectionQuality(
       },
     });
 
-    const earnStats = await getEarnStats(accessToken, currentAgent);
+    const earnStats = await getEarnStats(accessToken);
 
     if (!hasTasks) {
       console.log(chalk.green(`✅ Đã hoàn thành tất cả task cho tài khoản này`));
     }
 
-    console.log(
-      chalk.green(
-        `✅ Tài khoản ${email}${currentProxyAddress ? ` với proxy: ${currentProxyAddress.split('@')[1]}` : ''}:`
-      )
-    );
+    console.log(chalk.green(`✅ Tài khoản ${email}:`));
     console.log(chalk.green(`   - Chất lượng kết nối: ${connectionResponse.data.data}`));
     console.log(chalk.green(`   - Điểm hôm nay: ${earnStats.todayPointEarned}`));
     console.log(chalk.green(`   - Tổng điểm: ${earnStats.totalPointEarned}`));
     return { success: true, email };
   } catch (error) {
-    // Xử lý lỗi 502 Bad Gateway trong các bước khác
     if (error.message.includes('Lỗi 502 Bad Gateway')) {
       console.log(chalk.red(`❌ Tài khoản ${email}: Lỗi 502 Bad Gateway sau nhiều lần thử. Bỏ qua...`));
       return { success: false, email };
-    }
-    // Xử lý các lỗi liên quan đến proxy trong các bước khác (ENETUNREACH, ECONNREFUSED, ETIMEDOUT)
-    if (error.code === 'ENETUNREACH' || error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT') {
-      console.log(
-        chalk.yellow(
-          `⚠️ Proxy ${currentProxyAddress} không khả dụng cho tài khoản ${email}, chuyển sang chế độ không proxy...`
-        )
-      );
-      proxyStatusMap[email] = false; // Chuyển sang không proxy
-      await saveProxyStatus(proxyStatusMap);
-      return await checkConnectionQuality(
-        index,
-        accessTokens,
-        refreshTokens,
-        null,
-        null,
-        checkInMap,
-        completedTasks,
-        proxyStatusMap
-      );
     }
     console.log(chalk.red(`❌ Tài khoản ${email}: Lỗi - ${error.message}`));
     return { success: false, email };
@@ -817,10 +702,8 @@ async function checkConnectionQuality(
 async function runApiCalls() {
   let accessTokens = await readAccessTokens();
   let refreshTokens = await readRefreshTokens();
-  let proxies = await readProxies();
   let checkInMap = await readLastCheckIn();
   let completedTasks = await readCompletedTasks();
-  let proxyStatusMap = await readProxyStatus();
 
   if (accessTokens.length === 0 || refreshTokens.length === 0) {
     console.error(chalk.red('❌ Không tìm thấy token trong file data.txt hoặc refeshtokens.txt'));
@@ -834,42 +717,12 @@ async function runApiCalls() {
     return;
   }
 
-  // Hỏi người dùng về việc sử dụng proxy
-  const useProxy = await askUseProxy();
-  console.log(chalk.cyan(`Sử dụng proxy: ${useProxy ? 'Có' : 'Không'}`));
-
-  // Cập nhật trạng thái proxy cho tất cả tài khoản
-  accessTokens.forEach((token) => {
-    const email = decodeAccessToken(token);
-    proxyStatusMap[email] = useProxy;
-  });
-  await saveProxyStatus(proxyStatusMap);
-
-  const proxyAgents = accessTokens.map((_, index) => {
-    const email = decodeAccessToken(accessTokens[index]);
-    const shouldUseProxy = proxyStatusMap[email] !== false; // Dựa trên trạng thái proxy đã lưu
-    if (shouldUseProxy && index < proxies.length && proxies[index]) {
-      return new HttpsProxyAgent(proxies[index]);
-    }
-    return null; // Không dùng proxy
-  });
-
-  const proxyAddresses = accessTokens.map((_, index) => {
-    const email = decodeAccessToken(accessTokens[index]);
-    const shouldUseProxy = proxyStatusMap[email] !== false;
-    if (shouldUseProxy && index < proxies.length && proxies[index]) {
-      return proxies[index];
-    }
-    return null;
-  });
-
   // Hiển thị tiêu đề hoành tráng
   console.log(chalk.magenta('🌟🌟🌟 Phi Phi Airdrop Automation Tool 🌟🌟🌟'));
   console.log(chalk.magenta('🚀 Được phát triển bởi Phi Phi - Chuyên gia tự động hóa hàng đầu 🚀'));
   console.log(chalk.magenta('💻 Tăng tốc hành trình săn airdrop của bạn ngay hôm nay! 💻'));
   console.log(chalk.cyan('🚀 Bắt đầu chạy chương trình...'));
   console.log(chalk.cyan(`📊 Tổng số tài khoản: ${accessTokens.length}`));
-  console.log(chalk.cyan(`🛡️ Tổng số proxy: ${proxies.length}`));
 
   let currentIndex = 0;
   let isProcessing = false;
@@ -896,11 +749,8 @@ async function runApiCalls() {
       currentIndex,
       accessTokens,
       refreshTokens,
-      proxyAgents[currentIndex],
-      proxyAddresses[currentIndex],
       checkInMap,
-      completedTasks,
-      proxyStatusMap
+      completedTasks
     );
 
     if (!result.success) {
@@ -911,7 +761,7 @@ async function runApiCalls() {
     isProcessing = false;
   };
 
-  // Thời gian chờ giữa các tài khoản 
+  // Thời gian chờ giữa các tài khoản
   setInterval(processNextAccount, 20000);
 }
 
