@@ -3,6 +3,18 @@ const fs = require('fs').promises;
 const chalk = require('chalk'); // Sử dụng chalk@4.1.2
 const jwt = require('jsonwebtoken'); // Thêm thư viện jsonwebtoken để giải mã JWT
 const readline = require('readline'); // Thêm thư viện để đọc input từ người dùng
+const http = require('http');
+
+// Tạo server HTTP để nhận ping
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('Flow Automation is running');
+});
+
+// Lắng nghe trên cổng được chỉ định bởi Render hoặc mặc định là 8080
+server.listen(process.env.PORT || 8080, () => {
+  console.log(chalk.cyan('🌐 Ping server running on port', process.env.PORT || 8080));
+});
 
 // Tạo giao diện để đọc input từ người dùng
 const rl = readline.createInterface({
