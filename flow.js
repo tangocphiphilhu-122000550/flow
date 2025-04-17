@@ -1,32 +1,28 @@
+const http = require('http');
 const axios = require('axios');
 const fs = require('fs').promises;
-const chalk = require('chalk'); // Sử dụng chalk@4.1.2
-const jwt = require('jsonwebtoken'); // Thêm thư viện jsonwebtoken để giải mã JWT
-const readline = require('readline'); // Thêm thư viện để đọc input từ người dùng
-const http = require('http');
+const chalk = require('chalk');
+const jwt = require('jsonwebtoken');
 
-// Tạo server HTTP để nhận ping
+// Tạo server HTTP để nhận ping và hỗ trợ health check
 const server = http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('Flow Automation is running');
+  if (req.url === '/healthz') {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('OK');
+  } else {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('Flow Automation is running');
+  }
 });
-
-// Lắng nghe trên cổng được chỉ định bởi Render hoặc mặc định là 8080
 server.listen(process.env.PORT || 8080, () => {
   console.log(chalk.cyan('🌐 Ping server running on port', process.env.PORT || 8080));
-});
-
-// Tạo giao diện để đọc input từ người dùng
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
 });
 
 // Biến để theo dõi trạng thái tạm dừng do lỗi 429
 let isPausedDueToRateLimit = false;
 let pauseUntil = 0;
 
-// Hàm delay (để chờ trước khi retry hoặc giữa các yêu cầu)
+// Hàm delay
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Hàm giải mã accessToken để lấy email
@@ -40,10 +36,19 @@ function decodeAccessToken(accessToken) {
   }
 }
 
+// Hàm đảm bảo file tồn tại
+async function ensureFileExists(filePath) {
+  try {
+    await fs.access(filePath);
+  } catch {
+    await fs.writeFile(filePath, '');
+  }
+}
+
 // Hàm đọc accessToken từ file data.txt
 async function readAccessTokens() {
   try {
-    const data = await fs.readFile('data.txt', 'utf8');
+    const data = await fs.readFile('/app/data/data.txt', 'utf8');
     return data
       .split('\n')
       .map((line) => line.trim())
@@ -57,7 +62,7 @@ async function readAccessTokens() {
 // Hàm đọc refreshToken từ file refeshtokens.txt
 async function readRefreshTokens() {
   try {
-    const data = await fs.readFile('refeshtokens.txt', 'utf8');
+    const data = await fs.readFile('/app/data/refeshtokens.txt', 'utf8');
     return data
       .split('\n')
       .map((line) => line.trim())
@@ -68,7 +73,7 @@ async function readRefreshTokens() {
   }
 }
 
-// Hàm định dạng thời gian thành chuỗi ngày giờ (theo thời gian hệ thống)
+// Hàm định dạng thời gian thành chuỗi ngày giờ
 function formatDateTime(timestamp) {
   const date = new Date(timestamp);
   const year = date.getFullYear();
@@ -80,7 +85,7 @@ function formatDateTime(timestamp) {
   return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 }
 
-// Hàm chuyển chuỗi ngày giờ thành timestamp (theo thời gian hệ thống)
+// Hàm chuyển chuỗi ngày giờ thành timestamp
 function parseDateTime(dateTimeStr) {
   const date = new Date(dateTimeStr);
   return date.getTime();
@@ -89,7 +94,7 @@ function parseDateTime(dateTimeStr) {
 // Hàm đọc thời gian điểm danh cuối cùng từ file lastCheckIn.txt
 async function readLastCheckIn() {
   try {
-    const data = await fs.readFile('lastCheckIn.txt', 'utf8');
+    const data = await fs.readFile('/app/data/lastCheckIn.txt', 'utf8');
     const checkInMap = {};
     data
       .split('\n')
@@ -97,13 +102,11 @@ async function readLastCheckIn() {
       .filter((line) => line)
       .forEach((line) => {
         const [email, dateTimeStr] = line.split('|');
-        // Chuyển chuỗi ngày giờ thành timestamp
         const timestamp = parseDateTime(dateTimeStr);
         checkInMap[email] = timestamp;
       });
     return checkInMap;
   } catch (error) {
-    // Nếu file không tồn tại hoặc lỗi, trả về object rỗng
     return {};
   }
 }
@@ -113,13 +116,13 @@ async function saveLastCheckIn(checkInMap) {
   const data = Object.entries(checkInMap)
     .map(([email, timestamp]) => `${email}|${formatDateTime(timestamp)}`)
     .join('\n');
-  await fs.writeFile('lastCheckIn.txt', data);
+  await fs.writeFile('/app/data/lastCheckIn.txt', data);
 }
 
 // Hàm đọc danh sách nhiệm vụ đã hoàn thành từ file completedTasks.txt
 async function readCompletedTasks() {
   try {
-    const data = await fs.readFile('completedTasks.txt', 'utf8');
+    const data = await fs.readFile('/app/data/completedTasks.txt', 'utf8');
     const completedTasks = new Set();
     data
       .split('\n')
@@ -131,7 +134,6 @@ async function readCompletedTasks() {
       });
     return completedTasks;
   } catch (error) {
-    // Nếu file không tồn tại hoặc lỗi, trả về Set rỗng
     return new Set();
   }
 }
@@ -142,10 +144,37 @@ async function saveCompletedTask(email, taskId, taskName, completedTasks) {
   const data = Array.from(completedTasks)
     .map((task) => {
       const [taskEmail, taskId] = task.split('|');
-      return `${taskEmail}|${taskId}|${taskName}`; // Lưu cả taskName để dễ đọc
+      return `${taskEmail}|${taskId}|${taskName}`;
     })
     .join('\n');
-  await fs.writeFile('completedTasks.txt', data);
+  await fs.writeFile('/app/data/completedTasks.txt', data);
+}
+
+// Hàm đọc trạng thái proxy từ file proxyStatus.txt (dù không dùng proxy, vẫn giữ để tương thích logic)
+async function readProxyStatus() {
+  try {
+    const data = await fs.readFile('/app/data/proxyStatus.txt', 'utf8');
+    const proxyStatusMap = {};
+    data
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line)
+      .forEach((line) => {
+        const [email, useProxy] = line.split('|');
+        proxyStatusMap[email] = useProxy === 'true';
+      });
+    return proxyStatusMap;
+  } catch (error) {
+    return {};
+  }
+}
+
+// Hàm lưu trạng thái proxy vào file proxyStatus.txt
+async function saveProxyStatus(proxyStatusMap) {
+  const data = Object.entries(proxyStatusMap)
+    .map(([email, useProxy]) => `${email}|${useProxy}`)
+    .join('\n');
+  await fs.writeFile('/app/data/proxyStatus.txt', data);
 }
 
 // Hàm kiểm tra xem đã điểm danh trong ngày chưa
@@ -155,7 +184,6 @@ function hasCheckedInToday(lastCheckInTimestamp) {
   const lastCheckInDate = new Date(lastCheckInTimestamp);
   const currentDate = new Date();
 
-  // So sánh ngày, tháng, năm
   return (
     lastCheckInDate.getDate() === currentDate.getDate() &&
     lastCheckInDate.getMonth() === currentDate.getMonth() &&
@@ -165,26 +193,26 @@ function hasCheckedInToday(lastCheckInTimestamp) {
 
 // Hàm kiểm tra xem đã đủ 24 giờ kể từ lần điểm danh cuối cùng chưa
 function hasWaited24Hours(lastCheckInTimestamp) {
-  if (!lastCheckInTimestamp) return true; // Nếu chưa có lần điểm danh nào, cho phép
+  if (!lastCheckInTimestamp) return true;
 
   const lastCheckInDate = new Date(lastCheckInTimestamp);
   const currentDate = new Date();
-  const timeDiff = currentDate - lastCheckInDate; // Thời gian chênh lệch (ms)
-  const hoursDiff = timeDiff / (1000 * 60 * 60); // Chuyển sang giờ
+  const timeDiff = currentDate - lastCheckInDate;
+  const hoursDiff = timeDiff / (1000 * 60 * 60);
 
-  return hoursDiff >= 24; // Đã đủ 24 giờ chưa
+  return hoursDiff >= 24;
 }
 
 // Hàm lưu accessToken vào file data.txt
 async function saveAccessTokens(accessTokens) {
   const data = accessTokens.join('\n');
-  await fs.writeFile('data.txt', data);
+  await fs.writeFile('/app/data/data.txt', data);
 }
 
 // Hàm lưu refreshToken vào file refeshtokens.txt
 async function saveRefreshTokens(refreshTokens) {
   const data = refreshTokens.join('\n');
-  await fs.writeFile('refeshtokens.txt', data);
+  await fs.writeFile('/app/data/refeshtokens.txt', data);
 }
 
 // Hàm thực hiện yêu cầu HTTP với cơ chế thử lại khi gặp lỗi 502 hoặc 429
@@ -203,10 +231,9 @@ async function makeRequestWithRetry(config, retries = 5, delayMs = 5000) {
       } else if (error.response && error.response.status === 429) {
         const retryAfter = error.response.headers['retry-after']
           ? parseInt(error.response.headers['retry-after'], 10) * 1000
-          : 60000; // Mặc định chờ 60 giây nếu không có Retry-After
+          : 60000;
         console.log(chalk.yellow(`⚠️ Lỗi 429 Too Many Requests. Tạm dừng toàn bộ xử lý trong ${retryAfter / 1000} giây...`));
         
-        // Tạm dừng toàn bộ xử lý
         isPausedDueToRateLimit = true;
         pauseUntil = Date.now() + retryAfter;
         await delay(retryAfter);
@@ -217,13 +244,13 @@ async function makeRequestWithRetry(config, retries = 5, delayMs = 5000) {
         }
         console.log(chalk.cyan(`🔄 Tiếp tục thử lại yêu cầu (Thử ${attempt}/${retries})...`));
       } else {
-        throw error; // Ném lỗi nếu không phải 502 hoặc 429
+        throw error;
       }
     }
   }
 }
 
-// Hàm kiểm tra AccessToken có hợp lệ không bằng cách gọi API get-earn-stats
+// Hàm kiểm tra AccessToken có hợp lệ không
 async function checkAccessTokenValidity(accessToken) {
   try {
     await makeRequestWithRetry({
@@ -244,16 +271,16 @@ async function checkAccessTokenValidity(accessToken) {
         referer: 'https://app.flow3.tech/',
       },
     });
-    return true; // Token hợp lệ
+    return true;
   } catch (error) {
     if (error.response?.status === 401) {
-      return false; // Token hết hạn
+      return false;
     }
-    throw error; // Lỗi khác
+    throw error;
   }
 }
 
-// Hàm làm mới accessToken bằng refreshToken và accessToken cũ
+// Hàm làm mới accessToken
 async function refreshAccessToken(oldAccessToken, refreshToken) {
   if (!oldAccessToken || oldAccessToken === 'undefined' || !refreshToken || refreshToken === 'undefined') {
     throw new Error('AccessToken hoặc refreshToken không hợp lệ');
@@ -309,7 +336,7 @@ async function getDailyCheckInTasks(accessToken) {
         referer: 'https://app.flow3.tech/',
       },
     });
-    return response.data.data; // Trả về mảng các task điểm danh hằng ngày
+    return response.data.data;
   } catch (error) {
     throw error;
   }
@@ -351,13 +378,11 @@ async function checkInDaily(accessToken, email, checkInMap) {
 
     if (hasCheckedInToday(lastCheckInTimestamp)) {
       console.log(chalk.gray(`⏳ Tài khoản ${email}: Chưa đủ 24 giờ nên chưa thể checkin, đợi lần sau.`));
-      return { status: 'success' }; // Trả về trạng thái thành công để tiếp tục xử lý
+      return { status: 'success' };
     }
 
-    // Lấy danh sách task điểm danh
     const dailyTasks = await getDailyCheckInTasks(accessToken);
 
-    // Kiểm tra xem tất cả các task đã claimed chưa
     const allClaimed = dailyTasks.every((task) => task.status === 'claimed');
     if (allClaimed) {
       console.log(chalk.gray(`⏳ Tài khoản ${email}: Đã hoàn thành tất cả các ngày điểm danh.`));
@@ -366,7 +391,6 @@ async function checkInDaily(accessToken, email, checkInMap) {
       return { status: 'success' };
     }
 
-    // Đếm số task đã claimed để xác định task tiếp theo
     let claimedCount = 0;
     for (const task of dailyTasks) {
       if (task.status === 'claimed') {
@@ -376,7 +400,6 @@ async function checkInDaily(accessToken, email, checkInMap) {
       }
     }
 
-    // Task tiếp theo là task tại vị trí claimedCount
     const taskToCheckIn = dailyTasks[claimedCount];
 
     if (!taskToCheckIn) {
@@ -384,35 +407,29 @@ async function checkInDaily(accessToken, email, checkInMap) {
       return { status: 'error' };
     }
 
-    // Nếu task tiếp theo bị khóa
     if (taskToCheckIn.status === 'locked') {
-      // Kiểm tra xem đã đủ 24 giờ kể từ lần điểm danh cuối cùng chưa
       if (!hasWaited24Hours(lastCheckInTimestamp)) {
         console.log(chalk.gray(`⏳ Tài khoản ${email}: Chưa đủ 24 giờ nên chưa thể checkin, đợi lần sau.`));
-        return { status: 'success' }; // Không lưu thời gian, trả về trạng thái thành công
+        return { status: 'success' };
       }
 
-      // Nếu đã đủ 24 giờ nhưng task vẫn khóa, tiếp tục xử lý các bước khác
       console.log(
         chalk.yellow(
           `⚠️ Tài khoản ${email}: Đã đủ 24 giờ nhưng ${taskToCheckIn.name} vẫn khóa. Sẽ kiểm tra lại ở vòng lặp sau.`
         )
       );
-      return { status: 'pending' }; // Trả về trạng thái pending để báo rằng tài khoản này cần kiểm tra lại
+      return { status: 'pending' };
     }
 
-    // Nếu task không bị khóa, thực hiện điểm danh
     const taskId = taskToCheckIn._id;
     const taskName = taskToCheckIn.name;
     console.log(chalk.cyan(`🔄 Đang thực hiện điểm danh: ${taskName}...`));
 
     try {
-      // Gọi API điểm danh
       await performDailyCheckIn(accessToken, taskId);
 
-      // Gọi lại API để kiểm tra trạng thái task sau khi điểm danh
       const updatedTasks = await getDailyCheckInTasks(accessToken);
-      const updatedTask = updatedTasks[claimedCount]; // Task tại vị trí vừa điểm danh
+      const updatedTask = updatedTasks[claimedCount];
 
       if (!updatedTask || updatedTask.status === 'locked') {
         console.log(
@@ -420,7 +437,7 @@ async function checkInDaily(accessToken, email, checkInMap) {
             `⚠️ Tài khoản ${email}: Điểm danh ${taskName} thất bại - Task vẫn bị khóa. Sẽ kiểm tra lại ở vòng lặp sau.`
           )
         );
-        return { status: 'pending' }; // Trả về trạng thái pending để kiểm tra lại
+        return { status: 'pending' };
       }
 
       if (updatedTask.status !== 'claimed') {
@@ -432,7 +449,6 @@ async function checkInDaily(accessToken, email, checkInMap) {
         return { status: 'error' };
       }
 
-      // Nếu trạng thái là claimed, điểm danh thành công
       checkInMap[email] = Date.now();
       await saveLastCheckIn(checkInMap);
       console.log(chalk.green(`📅 Tài khoản ${email}: Điểm danh ${taskName} thành công!`));
@@ -443,7 +459,7 @@ async function checkInDaily(accessToken, email, checkInMap) {
     }
   } catch (error) {
     console.log(chalk.red(`❌ Tài khoản ${email}: Điểm danh hằng ngày thất bại - ${error.message}`));
-    throw error; // Ném lỗi để hàm gọi có thể xử lý
+    throw error;
   }
 }
 
@@ -474,7 +490,7 @@ async function getUserTasks(accessToken) {
   }
 }
 
-// Hàm gọi API thực hiện nhiệm vụ (do-task)
+// Hàm gọi API thực hiện nhiệm vụ
 async function doTask(accessToken, taskId) {
   try {
     const response = await makeRequestWithRetry({
@@ -513,7 +529,7 @@ async function claimTask(accessToken, taskId) {
       headers: {
         Authorization: `Bearer ${accessToken}`,
         accept: 'application/json, text/plain, */*',
-        'accept-language': 'vi,fr-FR;q=0.9,fr;q=0.8,en Madonna:q=0.7,en:q=0.6',
+        'accept-language': 'vi,fr-FR;q=0.9,fr;q=0.8,en-US;q=0.7,en;q=0.6',
         'content-type': 'application/json',
         'sec-ch-ua': '"Chromium";v="134", "Not:A-Brand";v="24", "Google Chrome";v="134"',
         'sec-ch-ua-mobile': '?0',
@@ -532,7 +548,7 @@ async function claimTask(accessToken, taskId) {
   }
 }
 
-// Hàm thực hiện tất cả các nhiệm vụ cho một tài khoản và trả về trạng thái có task hay không
+// Hàm thực hiện tất cả các nhiệm vụ
 async function performTasks(accessToken, email, completedTasks) {
   let hasTasks = false;
 
@@ -579,13 +595,13 @@ async function performTasks(accessToken, email, completedTasks) {
     }
   } catch (error) {
     console.log(chalk.red(`❌ Lỗi khi lấy danh sách nhiệm vụ - ${error.message}`));
-    throw error; // Ném lỗi để hàm gọi có thể xử lý
+    throw error;
   }
 
   return hasTasks;
 }
 
-// Hàm gọi API get-earn-stats để lấy thông tin điểm số
+// Hàm gọi API get-earn-stats
 async function getEarnStats(accessToken) {
   try {
     const response = await makeRequestWithRetry({
@@ -613,13 +629,7 @@ async function getEarnStats(accessToken) {
 }
 
 // Hàm gọi API get-connection-quality và get-earn-stats
-async function checkConnectionQuality(
-  index,
-  accessTokens,
-  refreshTokens,
-  checkInMap,
-  completedTasks
-) {
+async function checkConnectionQuality(index, accessTokens, refreshTokens, checkInMap, completedTasks, proxyStatusMap) {
   let accessToken = accessTokens[index];
   let refreshToken = refreshTokens[index];
   const email = decodeAccessToken(accessToken);
@@ -629,7 +639,6 @@ async function checkConnectionQuality(
     return { success: false, email };
   }
 
-  // Kiểm tra AccessToken có hợp lệ không trước khi thực hiện bất kỳ thao tác nào
   let isTokenValid = false;
   try {
     isTokenValid = await checkAccessTokenValidity(accessToken);
@@ -649,7 +658,7 @@ async function checkConnectionQuality(
       refreshTokens[index] = newTokens.refreshToken;
       await saveAccessTokens(accessTokens);
       await saveRefreshTokens(refreshTokens);
-      accessToken = newTokens.accessToken; // Cập nhật accessToken mới
+      accessToken = newTokens.accessToken;
       console.log(chalk.green(`✅ AccessToken đã được làm mới thành công cho tài khoản ${email}`));
     } catch (refreshError) {
       console.log(chalk.red(`❌ Tài khoản ${email}: Không thể làm mới token. Bỏ qua...`));
@@ -657,17 +666,13 @@ async function checkConnectionQuality(
     }
   }
 
-  // Sau khi đảm bảo token hợp lệ, tiếp tục xử lý các bước khác
   try {
-    // Xử lý điểm danh hằng ngày
     const checkInResult = await checkInDaily(accessToken, email, checkInMap);
 
-    // Nếu trạng thái là error, bỏ qua tài khoản
     if (checkInResult.status === 'error') {
       return { success: false, email };
     }
 
-    // Tiếp tục thực hiện các bước khác ngay cả khi điểm danh chưa thành công
     const hasTasks = await performTasks(accessToken, email, completedTasks);
 
     const connectionResponse = await makeRequestWithRetry({
@@ -712,24 +717,29 @@ async function checkConnectionQuality(
 
 // Hàm chính để chạy vòng lặp qua các token
 async function runApiCalls() {
+  // Đảm bảo các file tồn tại
+  await ensureFileExists('/app/data/data.txt');
+  await ensureFileExists('/app/data/refeshtokens.txt');
+  await ensureFileExists('/app/data/lastCheckIn.txt');
+  await ensureFileExists('/app/data/completedTasks.txt');
+  await ensureFileExists('/app/data/proxyStatus.txt');
+
   let accessTokens = await readAccessTokens();
   let refreshTokens = await readRefreshTokens();
   let checkInMap = await readLastCheckIn();
   let completedTasks = await readCompletedTasks();
+  let proxyStatusMap = await readProxyStatus();
 
   if (accessTokens.length === 0 || refreshTokens.length === 0) {
     console.error(chalk.red('❌ Không tìm thấy token trong file data.txt hoặc refeshtokens.txt'));
-    rl.close();
     return;
   }
 
   if (accessTokens.length !== refreshTokens.length) {
     console.error(chalk.red('❌ Số lượng accessToken và refreshToken không khớp'));
-    rl.close();
     return;
   }
 
-  // Hiển thị tiêu đề hoành tráng
   console.log(chalk.magenta('🌟🌟🌟 Phi Phi Airdrop Automation Tool 🌟🌟🌟'));
   console.log(chalk.magenta('🚀 Được phát triển bởi Phi Phi - Chuyên gia tự động hóa hàng đầu 🚀'));
   console.log(chalk.magenta('💻 Tăng tốc hành trình săn airdrop của bạn ngay hôm nay! 💻'));
@@ -740,14 +750,13 @@ async function runApiCalls() {
   let isProcessing = false;
 
   const processNextAccount = async () => {
-    // Kiểm tra nếu chương trình đang bị tạm dừng do lỗi 429
     if (isPausedDueToRateLimit) {
       const remainingTime = pauseUntil - Date.now();
       if (remainingTime > 0) {
         console.log(chalk.yellow(`⏳ Đang tạm dừng do lỗi 429, chờ thêm ${remainingTime / 1000} giây...`));
         await delay(remainingTime);
       }
-      isPausedDueToRateLimit = false; // Tiếp tục sau khi hết thời gian chờ
+      isPausedDueToRateLimit = false;
     }
 
     if (isProcessing) return;
@@ -762,7 +771,8 @@ async function runApiCalls() {
       accessTokens,
       refreshTokens,
       checkInMap,
-      completedTasks
+      completedTasks,
+      proxyStatusMap
     );
 
     if (!result.success) {
@@ -773,17 +783,19 @@ async function runApiCalls() {
     isProcessing = false;
   };
 
-  // Thời gian chờ giữa các tài khoản
   setInterval(processNextAccount, 20000);
 }
 
 // Chạy chương trình
-runApiCalls()
-  .then(() => {
-    // Đóng giao diện readline khi hoàn tất
-    rl.close();
-  })
-  .catch((error) => {
-    console.error(chalk.red('❌ Lỗi trong chương trình:'), error.message);
-    rl.close();
-  });
+runApiCalls().catch((error) => {
+  console.error(chalk.red('❌ Lỗi trong chương trình:'), error.message);
+});
+
+// Xử lý lỗi toàn cục
+process.on('uncaughtException', (error) => {
+  console.error(chalk.red('❌ Lỗi toàn cục:'), error.message);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error(chalk.red('❌ Lỗi Promise:'), reason);
+});
