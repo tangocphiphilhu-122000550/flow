@@ -6,16 +6,23 @@ const { google } = require('googleapis');
 
 // Tạo server HTTP để nhận ping và hỗ trợ health check
 const server = http.createServer((req, res) => {
-  if (req.url === '/healthz') {
+  const timestamp = new Date().toISOString();
+  const method = req.method;
+  const url = req.url;
+
+  // Ghi log khi nhận được yêu cầu
+  console.log(chalk.blue(`[${timestamp}] Nhận yêu cầu: ${method} ${url}`));
+
+  if (url === '/healthz') {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
-    if (req.method === 'HEAD') {
+    if (method === 'HEAD') {
       res.end(); // Không gửi body cho HEAD
     } else {
       res.end('OK'); // Gửi body cho các phương thức khác (như GET)
     }
   } else {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
-    if (req.method === 'HEAD') {
+    if (method === 'HEAD') {
       res.end(); // Không gửi body cho HEAD
     } else {
       res.end('Flow Automation is running'); // Gửi body cho các phương thức khác
