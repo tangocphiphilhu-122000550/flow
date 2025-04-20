@@ -58,6 +58,9 @@ async function authenticateGoogleSheets() {
 let isPausedDueToRateLimit = false;
 let pauseUntil = 0;
 
+// Biến để theo dõi trạng thái vòng lặp
+let lastActivity = Date.now();
+
 // Hàm delay
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -768,79 +771,113 @@ async function checkConnectionQuality(index, accessTokens, refreshTokens, checkI
 
 // Hàm chính để chạy vòng lặp qua các token
 async function runApiCalls() {
-  // Xác thực với Google Sheets
-  await authenticateGoogleSheets();
+  try {
+    // Xác thực với Google Sheets
+    await authenticateGoogleSheets();
 
-  let accessTokens = await readAccessTokens();
-  let refreshTokens = await readRefreshTokens();
-  let checkInMap = await readLastCheckIn();
-  let completedTasks = await readCompletedTasks();
+    let accessTokens = await readAccessTokens();
+    let refreshTokens = await readRefreshTokens();
+    let checkInMap = await readLastCheckIn();
+    let completedTasks = await readCompletedTasks();
 
-  if (accessTokens.length === 0 || refreshTokens.length === 0) {
-    console.error(chalk.red('❌ Không tìm thấy token trong Google Sheets (AccessTokens hoặc RefreshTokens)'));
-    return;
-  }
+    if (accessTokens.length === 0 || refreshTokens.length === 0) {
+      console.error(chalk.red('❌ Không tìm thấy token trong Google Sheets (AccessTokens hoặc RefreshTokens)'));
+      return;
+    }
 
-  if (accessTokens.length !== refreshTokens.length) {
-    console.error(chalk.red('❌ Số lượng accessToken và refreshToken không khớp'));
-    return;
-  }
+    if (accessTokens.length !== refreshTokens.length) {
+      console.error(chalk.red('❌ Số lượng accessToken và refreshToken không khớp'));
+      return;
+    }
 
-  console.log(chalk.magenta('🌟🌟🌟 Phi Phi Airdrop Automation Tool 🌟🌟🌟'));
-  console.log(chalk.magenta('🚀 Được phát triển bởi Phi Phi - Chuyên gia tự động hóa hàng đầu 🚀'));
-  console.log(chalk.magenta('💻 Tăng tốc hành trình săn airdrop của bạn ngay hôm nay! 💻'));
-  console.log(chalk.cyan('🚀 Bắt đầu chạy chương trình...'));
-  console.log(chalk.cyan(`📊 Tổng số tài khoản: ${accessTokens.length}`));
+    console.log(chalk.magenta('🌟🌟🌟 Phi Phi Airdrop Automation Tool 🌟🌟🌟'));
+    console.log(chalk.magenta('🚀 Được phát triển bởi Phi Phi - Chuyên gia tự động hóa hàng đầu 🚀'));
+    console.log(chalk.magenta('💻 Tăng tốc hành trình săn airdrop của bạn ngay hôm nay! 💻'));
+    console.log(chalk.cyan('🚀 Bắt đầu chạy chương trình...'));
+    console.log(chalk.cyan(`📊 Tổng số tài khoản: ${accessTokens.length}`));
 
-  let currentIndex = 0;
-  let isProcessing = false;
+    let currentIndex = 0;
+    let isProcessing = false;
 
-  const processNextAccount = async () => {
-    if (isPausedDueToRateLimit) {
-      const remainingTime = pauseUntil - Date.now();
-      if (remainingTime > 0) {
-        console.log(chalk.yellow(`⏳ Đang tạm dừng do lỗi 429, chờ thêm ${remainingTime / 1000} giây...`));
-        await delay(remainingTime);
+    const processNextAccount = async () => {
+      try {
+        if (isPausedDueToRateLimit) {
+          const remainingTime = pauseUntil - Date.now();
+          if (remainingTime > 0) {
+            console.log(chalk.yellow(`⏳ Đang tạm dừng do lỗi 429, chờ thêm ${remainingTime / 1000} giây...`));
+            await delay(remainingTime);
+          }
+          isPausedDueToRateLimit = false;
+        }
+
+        if (isProcessing) {
+          console.log(chalk.gray(`⏳ Đang xử lý tài khoản khác, bỏ qua vòng lặp này...`));
+          return;
+        }
+
+        isProcessing = true;
+        lastActivity = Date.now(); // Cập nhật thời gian hoạt động
+
+        const email = decodeAccessToken(accessTokens[currentIndex]);
+        console.log(chalk.cyan(`---------------- ${email} -------------------`));
+        console.log(chalk.cyan(`🔄 Đang xử lý tài khoản: ${email} (Index: ${currentIndex})`));
+
+        const result = await checkConnectionQuality(
+          currentIndex,
+          accessTokens,
+          refreshTokens,
+          checkInMap,
+          completedTasks
+        );
+
+        if (!result.success) {
+          console.log(chalk.gray(`⏭️ Bỏ qua tài khoản ${email}`));
+        }
+
+        currentIndex = (currentIndex + 1) % accessTokens.length;
+      } catch (error) {
+        console.error(chalk.red(`❌ Lỗi trong processNextAccount: ${error.message}`));
+      } finally {
+        isProcessing = false; // Đảm bảo isProcessing được đặt lại
+        console.log(chalk.cyan(`🔄 Hoàn thành xử lý tài khoản, chuyển sang tài khoản tiếp theo sau 20 giây...`));
       }
-      isPausedDueToRateLimit = false;
-    }
+    };
 
-    if (isProcessing) return;
-    isProcessing = true;
+    // Ghi log trạng thái vòng lặp mỗi 5 phút
+    setInterval(() => {
+      console.log(chalk.cyan(`🕒 Trạng thái vòng lặp: Vẫn chạy, thời gian hoạt động cuối: ${new Date(lastActivity).toISOString()}`));
+      // Kiểm tra nếu không có hoạt động trong 30 phút, khởi động lại
+      if (Date.now() - lastActivity > 30 * 60 * 1000) {
+        console.log(chalk.red('⚠️ Không có hoạt động trong 30 phút, khởi động lại runApiCalls...'));
+        runApiCalls();
+      }
+    }, 5 * 60 * 1000);
 
-    const email = decodeAccessToken(accessTokens[currentIndex]);
-    console.log(chalk.cyan(`---------------- ${email} -------------------`));
-    console.log(chalk.cyan(`🔄 Đang xử lý tài khoản: ${email}`));
-
-    const result = await checkConnectionQuality(
-      currentIndex,
-      accessTokens,
-      refreshTokens,
-      checkInMap,
-      completedTasks
-    );
-
-    if (!result.success) {
-      console.log(chalk.gray(`⏭️ Bỏ qua tài khoản ${email}`));
-    }
-
-    currentIndex = (currentIndex + 1) % accessTokens.length;
-    isProcessing = false;
-  };
-
-  setInterval(processNextAccount, 20000);
+    // Chạy vòng lặp chính
+    setInterval(processNextAccount, 20000);
+  } catch (error) {
+    console.error(chalk.red('❌ Lỗi trong runApiCalls:'), error.message);
+    // Thử khởi động lại sau 5 phút nếu có lỗi
+    setTimeout(runApiCalls, 5 * 60 * 1000);
+  }
 }
 
 // Chạy chương trình
 runApiCalls().catch((error) => {
-  console.error(chalk.red('❌ Lỗi trong chương trình:'), error.message);
+  console.error(chalk.red('❌ Lỗi khởi động chương trình:'), error.message);
+  // Thử khởi động lại sau 5 phút
+  setTimeout(runApiCalls, 5 * 60 * 1000);
 });
 
 // Xử lý lỗi toàn cục
 process.on('uncaughtException', (error) => {
   console.error(chalk.red('❌ Lỗi toàn cục:'), error.message);
+  // Thử khởi động lại sau 5 phút
+  setTimeout(runApiCalls, 5 * 60 * 1000);
 });
 
 process.on('unhandledRejection', (reason) => {
   console.error(chalk.red('❌ Lỗi Promise:'), reason);
+  // Thử khởi động lại sau 5 phút
+  setTimeout(runApiCalls, 5 * 60 * 1000);
 });
